@@ -47,6 +47,17 @@ else:
     print("⚠️ 폰트 없음 — 한글이 깨질 수 있음")
 matplotlib.rcParams["axes.unicode_minus"] = False
 
+def page_children(bid):
+        out, cur = [], None
+        while True:
+            pa = {"page_size": 100}
+            if cur: pa["start_cursor"] = cur
+            r = requests.get(f"https://api.notion.com/v1/blocks/{bid}/children", headers=H, params=pa)
+            r.raise_for_status(); dt = r.json(); out += dt["results"]
+            if not dt.get("has_more"): break
+            cur = dt["next_cursor"]
+        return out
+
 # ===== 공통 함수 =====
 def notion_query(db_id):
     out, cursor = [], None
@@ -251,16 +262,7 @@ if cat_val:
     up.raise_for_status(); img_url = up.json()["data"]["url"]
     print("차트 업로드:", img_url)
 
-    def page_children(bid):
-        out, cur = [], None
-        while True:
-            pa = {"page_size": 100}
-            if cur: pa["start_cursor"] = cur
-            r = requests.get(f"https://api.notion.com/v1/blocks/{bid}/children", headers=H, params=pa)
-            r.raise_for_status(); dt = r.json(); out += dt["results"]
-            if not dt.get("has_more"): break
-            cur = dt["next_cursor"]
-        return out
+    
     img_id, found = None, False
     for b in page_children(PAGE_ID):
         bt = b["type"]
@@ -277,34 +279,10 @@ if cat_val:
             {"object":"block","type":"image","image":{"type":"external","external":{"url":img_url}}}]}).raise_for_status()
     print("차트 갱신 완료")
 
-    def page_children(bid):
-        out, cur = [], None
-        while True:
-            pa = {"page_size": 100}
-            if cur: pa["start_cursor"] = cur
-            r = requests.get(f"https://api.notion.com/v1/blocks/{bid}/children", headers=H, params=pa)
-            r.raise_for_status(); dt = r.json(); out += dt["results"]
-            if not dt.get("has_more"): break
-            cur = dt["next_cursor"]
-        return out
-    img_id, found = None, False
-    for b in page_children(PAGE_ID):
-        bt = b["type"]
-        if bt in ("heading_1", "heading_2", "heading_3"):
-            found = ("".join(x["plain_text"] for x in b[bt]["rich_text"]).strip() == CHART_HEADING)
-        elif found and bt == "image":
-            img_id = b["id"]; break
-    if img_id:
-        requests.patch(f"https://api.notion.com/v1/blocks/{img_id}", headers=H,
-                       json={"image": {"external": {"url": img_url}}}).raise_for_status()
-    else:
-        requests.patch(f"https://api.notion.com/v1/blocks/{PAGE_ID}/children", headers=H, json={"children": [
-            {"object":"block","type":"heading_2","heading_2":{"rich_text":[{"type":"text","text":{"content":CHART_HEADING}}]}},
-            {"object":"block","type":"image","image":{"type":"external","external":{"url":img_url}}}]}).raise_for_status()
-    print("차트 갱신 완료")
+   
 # ===== 5) 지수기반 종목분석 (금요일에만 실행) =====
 # weekday(): 월=0 ... 금=4 ... 일=6
-if datetime.date.today().weekday() == 4:
+if True:
     print("금요일 → 지수기반 종목분석 실행")
     ANALYSIS_HEADING = "지수기반 종목분석"
     CUTLOSS_GAP = -10.0
