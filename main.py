@@ -523,21 +523,34 @@ if True:
         leaders = [r for r in results if r["verdict"] == "주도주"]
         print(f"후보 {len(results)}개 중 주도주 {len(leaders)}개")
 
-        # 차트: 주도주(없으면 상대수익률 상위 8개) 누적수익률
-        plot_list = leaders[:8] if leaders else [r for r in results if r["series"] is not None][:8]
+        # 차트: 50개 전체를 KOSPI200과 비교 (주도주·상위는 강조, 나머지는 옅게)
+        plot_list = [r for r in results if r["series"] is not None]
         if plot_list:
             cutoff = plot_list[0]["series"].index[-1] - pd.Timedelta(days=182)
-            fig, ax = plt.subplots(figsize=(12,7), dpi=140)
+            fig, ax = plt.subplots(figsize=(14, 8), dpi=140)
+            # 나머지 대장주: 옅은 회색 (범례 없음)
+            for R in plot_list:
+                if R["verdict"] == "주도주": continue
+                sr = R["series"]; sr = sr[sr.index >= cutoff]
+                if len(sr): ax.plot(sr.index, (sr/sr.iloc[0]*100).values, lw=0.8, color="#cccccc", alpha=0.6, zorder=1)
+            # 상대수익률 상위 8개: 색상 + 범례
+            top8 = sorted([r for r in plot_list], key=lambda x: (x["rel"] if x["rel"] is not None else -999), reverse=True)[:8]
+            cmap = plt.cm.tab10.colors
+            for i, R in enumerate(top8):
+                sr = R["series"]; sr = sr[sr.index >= cutoff]
+                if len(sr): ax.plot(sr.index, (sr/sr.iloc[0]*100).values, lw=2, color=cmap[i % 10], label=R["name"], zorder=3)
+            # 주도주: 굵게 강조 (상위8에 없더라도)
+            for R in plot_list:
+                if R["verdict"] != "주도주": continue
+                sr = R["series"]; sr = sr[sr.index >= cutoff]
+                if len(sr): ax.plot(sr.index, (sr/sr.iloc[0]*100).values, lw=3, color="red", label=f"★{R['name']}(주도주)", zorder=4)
+            # KOSPI200 기준선
             if ks is not None:
                 ksr = ks[ks.index >= cutoff]
-                if len(ksr): ax.plot(ksr.index, (ksr/ksr.iloc[0]*100).values, lw=3, ls="--", color="black", label="KOSPI200")
-            for R in plot_list:
-                sr = R["series"]; sr = sr[sr.index >= cutoff]
-                if len(sr): ax.plot(sr.index, (sr/sr.iloc[0]*100).values, lw=1.8, label=R["name"])
-            title = "국내 섹터별 대장주 · 6개월 누적수익률" + ("" if leaders else " (주도주 없음·상위 표시)")
-            ax.set_title(title, fontsize=15, fontproperties=KFONT)
+                if len(ksr): ax.plot(ksr.index, (ksr/ksr.iloc[0]*100).values, lw=3, ls="--", color="black", label="KOSPI200", zorder=5)
+            ax.set_title("국내 섹터별 대장주 50종목 vs KOSPI200 · 6개월 누적수익률", fontsize=15, fontproperties=KFONT)
             ax.set_ylabel("누적수익률 (기준=100)", fontproperties=KFONT); ax.grid(True, alpha=0.3)
-            leg = ax.legend(fontsize=10, loc="best", ncol=2)
+            leg = ax.legend(fontsize=9, loc="upper left", ncol=2)
             for tx in leg.get_texts(): tx.set_fontproperties(KFONT)
             fig.tight_layout()
             buf = io.BytesIO(); fig.savefig(buf, format="png", bbox_inches="tight"); plt.close(fig)
@@ -559,40 +572,6 @@ if True:
                     {"object":"block","type":"heading_2","heading_2":{"rich_text":[{"type":"text","text":{"content":LEADER_HEADING}}]}},
                     {"object":"block","type":"image","image":{"type":"external","external":{"url":l_url}}}]}).raise_for_status()
             print("주도주 차트 갱신 완료")
-
-        # 노션 표: 후보 전체 (판정·미충족조건 포함)
-        L_DB_TITLE = "섹터별 대장주"
-        l_db = _find_child_db(PAGE_ID, L_DB_TITLE)
-        if not l_db:
-            r = requests.post("https://api.notion.com/v1/databases", headers=H, json={
-                "parent":{"type":"page_id","page_id":PAGE_ID},
-                "title":[{"type":"text","text":{"content":L_DB_TITLE}}], "is_inline":True,
-                "properties":{"종목명":{"title":{}},"티커":{"rich_text":{}},"섹터":{"rich_text":{}},
-                    "6개월수익률(%)":{"number":{"format":"number"}},
-                    "상대수익률(%)":{"number":{"format":"number"}},
-                    "52주고점비율(%)":{"number":{"format":"number"}},
-                    "판정":{"select":{"options":[{"name":"주도주","color":"green"},{"name":"비주도주","color":"gray"},{"name":"데이터없음","color":"red"},{"name":"오류","color":"red"}]}},
-                    "미충족조건":{"rich_text":{}}}})
-            r.raise_for_status(); l_db = r.json()["id"]
-        l_existing = {}
-        for rr in notion_query(l_db):
-            rtk = rr["properties"]["티커"]["rich_text"]
-            if rtk: l_existing[rtk[0]["plain_text"]] = rr["id"]
-        def _n(x): return None if x is None else round(float(x),2)
-        for R in results:
-            props = {"종목명":{"title":[{"type":"text","text":{"content":R["name"]}}]},
-                     "티커":{"rich_text":[{"type":"text","text":{"content":R["code"]}}]},
-                     "섹터":{"rich_text":[{"type":"text","text":{"content":R["sector"]}}]},
-                     "6개월수익률(%)":{"number":_n(R["ret6"])},
-                     "상대수익률(%)":{"number":_n(R["rel"])},
-                     "52주고점비율(%)":{"number":_n(R["high"])},
-                     "판정":{"select":{"name":R["verdict"]}},
-                     "미충족조건":{"rich_text":[{"type":"text","text":{"content":R["fail"]}}]}}
-            if R["code"] in l_existing:
-                requests.patch(f"https://api.notion.com/v1/pages/{l_existing[R['code']]}", headers=H, json={"properties":props}).raise_for_status()
-            else:
-                requests.post("https://api.notion.com/v1/pages", headers=H, json={"parent":{"database_id":l_db},"properties":props}).raise_for_status()
-        print(f"섹터별 대장주 표 갱신 완료 ({len(results)}개, 주도주 {len(leaders)}개)")
     else:
         print("WICS 데이터 수집 실패 — 주도주 분석 건너뜀")
 else:
