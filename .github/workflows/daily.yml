@@ -2,7 +2,7 @@ name: Daily SWING Portfolio Update
 
 on:
   schedule:
-    - cron: "0 10 * * 1-5"# 평일 10:00 UTC = 19:00 KST
+    - cron: "0 10 * * 1-5"
   workflow_dispatch:          # 수동 실행 버튼
 
 jobs:
