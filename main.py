@@ -21,25 +21,30 @@ CHART_HEADING = "분류별 비율"
 
 H = {"Authorization": f"Bearer {NOTION_TOKEN}", "Notion-Version": NOTION_VERSION, "Content-Type": "application/json"}
 
-# ===== 한글 폰트 (NanumGothic 다운로드 + FontProperties 객체 보관) =====
+# ===== 한글 폰트: 직접 다운로드 후 FontProperties 객체로 보관 =====
 import urllib.request
 import matplotlib.font_manager as fm
 
 FONT_PATH = "/tmp/NanumGothic.ttf"
-FONT_URL = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
 if not os.path.exists(FONT_PATH):
-    try:
-        urllib.request.urlretrieve(FONT_URL, FONT_PATH)
-        print("폰트 다운로드 완료")
-    except Exception as e:
-        print("폰트 다운로드 실패:", e)
+    for url in [
+        "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf",
+        "https://cdn.jsdelivr.net/gh/google/fonts/ofl/nanumgothic/NanumGothic-Regular.ttf",
+    ]:
+        try:
+            urllib.request.urlretrieve(url, FONT_PATH)
+            if os.path.getsize(FONT_PATH) > 100000:  # 정상 폰트 파일인지 크기 확인
+                print("폰트 다운로드 완료:", url); break
+        except Exception as e:
+            print("폰트 다운로드 시도 실패:", e)
 
-KFONT = None
-if os.path.exists(FONT_PATH):
+KFONT = fm.FontProperties(fname=FONT_PATH) if os.path.exists(FONT_PATH) else None
+if KFONT:
     fm.fontManager.addfont(FONT_PATH)
-    KFONT = fm.FontProperties(fname=FONT_PATH)              # ← 이 객체를 직접 지정해서 씀
     matplotlib.rcParams["font.family"] = KFONT.get_name()
     print("폰트 적용:", KFONT.get_name())
+else:
+    print("⚠️ 폰트 없음 — 한글이 깨질 수 있음")
 matplotlib.rcParams["axes.unicode_minus"] = False
 
 # ===== 공통 함수 =====
@@ -227,6 +232,12 @@ if cat_val:
         textprops={"fontproperties": KFONT})
     for at in autotexts: at.set_fontproperties(KFONT)
     ax1.set_title("보유주식 분류별 비율", fontsize=14, fontproperties=KFONT); ax1.axis("equal")
+
+    ax2.axis("off"); ax2.set_title("분류별 평가금액", fontsize=14, fontproperties=KFONT)
+    # ... rows, cc, tbl 생성은 그대로 ...
+    tbl.auto_set_font_size(False); tbl.set_fontsize(11); tbl.scale(1, 1.7)
+    for cell in tbl.get_celld().values():
+        cell.get_text().set_fontproperties(KFONT)
 
     # (우) 표
     ax2.axis("off"); ax2.set_title("분류별 평가금액", fontsize=14, fontproperties=KFONT)
