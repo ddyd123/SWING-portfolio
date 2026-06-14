@@ -447,6 +447,119 @@ if datetime.date.today().weekday() == 4:
         else:
             requests.post("https://api.notion.com/v1/pages", headers=H, json={"parent": {"database_id": a_db}, "properties": props}).raise_for_status()
     print(f"분석 대상 표 갱신 완료 ({len(WATCHLIST)}종목)")
+    # ===== 6) 국내 주도대장주 선별 (시총 상위 풀 + 4개 조건) =====
+    import numpy as np
+    import FinanceDataReader as fdr
+    LEADER_HEADING = "국내 주도대장주"
+    TOP_N = 60          # 코스피 시총 상위 후보 수
+    HIGH_RATIO = 0.80   # 52주 고점 대비 비율 조건
+
+    print("주도주 분석: 코스피 시총 상위 수집 중...")
+    krx = fdr.StockListing("KOSPI")
+    cap_col = next((c for c in ["Marcap", "MarketCap", "Cap"] if c in krx.columns), None)
+    name_col = next((c for c in ["Name", "종목명"] if c in krx.columns), None)
+    code_col = next((c for c in ["Code", "Symbol", "종목코드"] if c in krx.columns), None)
+    krx = krx.dropna(subset=[cap_col]).copy()
+    krx[cap_col] = pd.to_numeric(krx[cap_col], errors="coerce")
+    krx = krx.dropna(subset=[cap_col]).sort_values(cap_col, ascending=False).head(TOP_N)
+
+    # KOSPI200 6개월 수익률
+    end = datetime.date.today(); start = end - datetime.timedelta(days=200)
+    ks200 = fdr.DataReader("KS200", start)["Close"].dropna()
+    ks200_6m = (ks200.iloc[-1] / ks200.iloc[0] - 1) * 100 if len(ks200) > 20 else 0.0
+
+    leaders = []
+    for _, row in krx.iterrows():
+        code = str(row[code_col]).zfill(6); nm = row[name_col]
+        try:
+            df = fdr.DataReader(code, start)["Close"].dropna()
+            if len(df) < 120: continue
+            ma20, ma60, ma120 = df.rolling(20).mean(), df.rolling(60).mean(), df.rolling(120).mean()
+            price = df.iloc[-1]
+            ret6 = (price / df.iloc[0] - 1) * 100
+            rel = ret6 - ks200_6m                      # 상대수익률
+            high52 = df.tail(252).max()
+            c1 = ret6 > ks200_6m                        # ① 6개월 수익률 > 지수
+            c2 = price > ma120.iloc[-1]                 # ② 120일선 위
+            c3 = ma20.iloc[-1] > ma60.iloc[-1]          # ③ 20>60 정배열
+            c4 = price >= high52 * HIGH_RATIO           # ④ 52주 고점 80% 이상
+            if c1 and c2 and c3 and c4:
+                leaders.append({"name": nm, "code": code, "ret6": ret6, "rel": rel,
+                                "high": price / high52 * 100, "series": df})
+        except Exception:
+            continue
+    leaders.sort(key=lambda x: x["rel"], reverse=True)   # 상대수익률 순
+    print(f"주도주 {len(leaders)}개 선별 (후보 {len(krx)}개)")
+
+    if leaders:
+        top = leaders[:8]   # 차트 가독성 위해 상위 8개만 표시
+        fig, ax = plt.subplots(figsize=(12, 7), dpi=140)
+        base = ks200 / ks200.iloc[0] * 100
+        ax.plot(base.index, base.values, lw=3, ls="--", color="black", label="KOSPI200")
+        for L in top:
+            s = L["series"]; norm = s / s.iloc[0] * 100
+            ax.plot(norm.index, norm.values, lw=1.8, label=L["name"])
+        ax.set_title("국내 주도대장주 · 6개월 누적수익률 추이", fontsize=15, fontproperties=KFONT)
+        ax.set_ylabel("누적수익률 (기준=100)", fontproperties=KFONT); ax.grid(True, alpha=0.3)
+        leg = ax.legend(fontsize=10, loc="best", ncol=2)
+        for tx in leg.get_texts(): tx.set_fontproperties(KFONT)
+        fig.tight_layout()
+        buf = io.BytesIO(); fig.savefig(buf, format="png", bbox_inches="tight"); plt.close(fig)
+        up = requests.post("https://api.imgbb.com/1/upload", params={"key": IMGBB_API_KEY},
+                           data={"image": base64.b64encode(buf.getvalue()).decode()})
+        up.raise_for_status(); l_url = up.json()["data"]["url"]
+        print("주도주 차트 업로드:", l_url)
+
+        l_img, l_found = None, False
+        for b in page_children(PAGE_ID):
+            bt = b["type"]
+            if bt in ("heading_1", "heading_2", "heading_3"):
+                l_found = ("".join(x["plain_text"] for x in b[bt]["rich_text"]).strip() == LEADER_HEADING)
+            elif l_found and bt == "image":
+                l_img = b["id"]; break
+        if l_img:
+            requests.patch(f"https://api.notion.com/v1/blocks/{l_img}", headers=H,
+                           json={"image": {"external": {"url": l_url}}}).raise_for_status()
+        else:
+            requests.patch(f"https://api.notion.com/v1/blocks/{PAGE_ID}/children", headers=H, json={"children": [
+                {"object":"block","type":"heading_2","heading_2":{"rich_text":[{"type":"text","text":{"content":LEADER_HEADING}}]}},
+                {"object":"block","type":"image","image":{"type":"external","external":{"url":l_url}}}]}).raise_for_status()
+        print("주도주 차트 갱신 완료")
+
+        # 노션 "주도대장주" 표(인라인 DB) 갱신
+        L_DB_TITLE = "주도대장주"
+        l_db = _find_child_db(PAGE_ID, L_DB_TITLE)
+        if not l_db:
+            r = requests.post("https://api.notion.com/v1/databases", headers=H, json={
+                "parent": {"type": "page_id", "page_id": PAGE_ID},
+                "title": [{"type": "text", "text": {"content": L_DB_TITLE}}],
+                "is_inline": True,
+                "properties": {
+                    "종목명": {"title": {}}, "티커": {"rich_text": {}},
+                    "6개월수익률(%)": {"number": {"format": "number"}},
+                    "상대수익률(%)": {"number": {"format": "number"}},
+                    "52주고점비율(%)": {"number": {"format": "number"}},
+                    "판정": {"select": {"options": [{"name": "주도주", "color": "green"}]}},
+                }})
+            r.raise_for_status(); l_db = r.json()["id"]
+        l_existing = {}
+        for rr in notion_query(l_db):
+            rtk = rr["properties"]["티커"]["rich_text"]
+            if rtk: l_existing[rtk[0]["plain_text"]] = rr["id"]
+        for L in leaders:
+            props = {
+                "종목명": {"title": [{"type": "text", "text": {"content": L["name"]}}]},
+                "티커": {"rich_text": [{"type": "text", "text": {"content": L["code"]}}]},
+                "6개월수익률(%)": {"number": round(L["ret6"], 2)},
+                "상대수익률(%)": {"number": round(L["rel"], 2)},
+                "52주고점비율(%)": {"number": round(L["high"], 2)},
+                "판정": {"select": {"name": "주도주"}},
+            }
+            if L["code"] in l_existing:
+                requests.patch(f"https://api.notion.com/v1/pages/{l_existing[L['code']]}", headers=H, json={"properties": props}).raise_for_status()
+            else:
+                requests.post("https://api.notion.com/v1/pages", headers=H, json={"parent": {"database_id": l_db}, "properties": props}).raise_for_status()
+        print(f"주도대장주 표 갱신 완료 ({len(leaders)}개)")
 else:
     print("오늘은 금요일이 아니라 지수분석은 건너뜀")
 
