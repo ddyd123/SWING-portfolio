@@ -470,6 +470,9 @@ if True:
         wdf = pd.DataFrame(wics_rows).sort_values(["sector","size"], ascending=[True,False])
         top_df = wdf.groupby("sector").head(TOP_PER_SECTOR).reset_index(drop=True)
         print("섹터별 후보:", top_df.groupby("sector").size().to_dict())
+        got = set(top_df["sector"]); missing = set(WICS_SECTORS.values()) - got
+        if missing:
+            print(f"⚠️ 누락 섹터 {len(missing)}개: {missing} — 결과가 불완전할 수 있음")
 
         hist_start = (datetime.date.today() - datetime.timedelta(days=600)).isoformat()
         def kr_hist(code):
