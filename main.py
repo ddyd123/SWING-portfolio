@@ -444,6 +444,8 @@ if True:
                     u = f"https://www.wiseindex.com/Index/GetIndexComponets?ceil_yn=0&dt={date_str}&sec_cd={sec_cd}"
                     j = requests.get(u, headers=UA_H, timeout=30).json()   # 타임아웃 30초
                     for it in j.get("list", []):
+                        if not rows and sec_cd == "G45":   # IT 섹터 첫 응답 한 번만 출력
+                        print("WICS 응답 샘플:", it)
                         code = str(it.get("CMP_CD","")).zfill(6); name = it.get("CMP_KOR","")
                         wgt = it.get("WGT") or it.get("IDX_WGT") or it.get("MKT_VAL") or 0
                         try: wgt = float(str(wgt).replace(",",""))
