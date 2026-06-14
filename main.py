@@ -438,18 +438,23 @@ if True:
     def fetch_wics(date_str):
         rows = []
         for sec_cd, sec_nm in WICS_SECTORS.items():
-            try:
-                u = f"https://www.wiseindex.com/Index/GetIndexComponets?ceil_yn=0&dt={date_str}&sec_cd={sec_cd}"
-                j = requests.get(u, headers=UA_H, timeout=15).json()
-                for it in j.get("list", []):
-                    code = str(it.get("CMP_CD","")).zfill(6); name = it.get("CMP_KOR","")
-                    wgt = it.get("WGT") or it.get("IDX_WGT") or it.get("MKT_VAL") or 0
-                    try: wgt = float(str(wgt).replace(",",""))
-                    except: wgt = 0.0
-                    if len(code)==6 and name:
-                        rows.append({"code":code,"name":name,"sector":sec_nm,"size":wgt})
-            except Exception as e:
-                print(f"WICS {sec_cd} 오류:", e)
+            ok = False
+            for attempt in range(3):                      # 최대 3회 재시도
+                try:
+                    u = f"https://www.wiseindex.com/Index/GetIndexComponets?ceil_yn=0&dt={date_str}&sec_cd={sec_cd}"
+                    j = requests.get(u, headers=UA_H, timeout=30).json()   # 타임아웃 30초
+                    for it in j.get("list", []):
+                        code = str(it.get("CMP_CD","")).zfill(6); name = it.get("CMP_KOR","")
+                        wgt = it.get("WGT") or it.get("IDX_WGT") or it.get("MKT_VAL") or 0
+                        try: wgt = float(str(wgt).replace(",",""))
+                        except: wgt = 0.0
+                        if len(code)==6 and name:
+                            rows.append({"code":code,"name":name,"sector":sec_nm,"size":wgt})
+                    ok = True; break
+                except Exception as e:
+                    print(f"WICS {sec_cd} 시도{attempt+1} 실패")
+            if not ok:
+                print(f"WICS {sec_cd} 최종 실패")
         return rows
 
     base = datetime.date.today() - datetime.timedelta(days=1)
@@ -486,18 +491,29 @@ if True:
         ks_6m = ret_6m(ks) or 0.0
 
         leaders = []
+        pass_cnt = {"price":0, "ma120":0, "align":0, "high":0, "all":0}
         for _, row in top_df.iterrows():
             s = kr_hist(row["code"])
-            if s is None: continue
+            if s is None:
+                print(f"  가격없음: {row['name']}({row['code']})"); continue
             try:
                 ma20, ma60, ma120 = s.rolling(20).mean(), s.rolling(60).mean(), s.rolling(120).mean()
                 price = s.iloc[-1]; r6 = ret_6m(s)
                 if r6 is None: continue
                 rel = r6 - ks_6m; high52 = s.tail(252).max()
-                if (r6 > ks_6m) and (price > ma120.iloc[-1]) and (ma20.iloc[-1] > ma60.iloc[-1]) and (price >= high52*HIGH_RATIO):
+                c1 = r6 > ks_6m; c2 = price > ma120.iloc[-1]
+                c3 = ma20.iloc[-1] > ma60.iloc[-1]; c4 = price >= high52*HIGH_RATIO
+                if c1: pass_cnt["price"] += 1
+                if c2: pass_cnt["ma120"] += 1
+                if c3: pass_cnt["align"] += 1
+                if c4: pass_cnt["high"] += 1
+                if c1 and c2 and c3 and c4:
+                    pass_cnt["all"] += 1
                     leaders.append({"name":row["name"],"code":row["code"],"sector":row["sector"],
                                     "ret6":r6,"rel":rel,"high":price/high52*100,"series":s})
-            except Exception: continue
+            except Exception as e:
+                print(f"  계산오류: {row['name']} {e}"); continue
+        print(f"조건별 통과: 지수초과 {pass_cnt['price']} / 120일선위 {pass_cnt['ma120']} / 정배열 {pass_cnt['align']} / 고점80% {pass_cnt['high']} → 전체통과 {pass_cnt['all']}")
         leaders.sort(key=lambda x: x["rel"], reverse=True)
         print(f"주도주 {len(leaders)}개 선별 (후보 {len(top_df)}개)")
 
