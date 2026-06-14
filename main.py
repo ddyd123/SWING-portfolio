@@ -21,7 +21,7 @@ CHART_HEADING = "분류별 비율"
 
 H = {"Authorization": f"Bearer {NOTION_TOKEN}", "Notion-Version": NOTION_VERSION, "Content-Type": "application/json"}
 
-# ===== 한글 폰트 (캐시 초기화 + NanumGothic 등록) =====
+# ===== 한글 폰트 (NanumGothic 다운로드 + FontProperties 객체 보관) =====
 import urllib.request
 import matplotlib.font_manager as fm
 
@@ -30,28 +30,17 @@ FONT_URL = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic
 if not os.path.exists(FONT_PATH):
     try:
         urllib.request.urlretrieve(FONT_URL, FONT_PATH)
+        print("폰트 다운로드 완료")
     except Exception as e:
         print("폰트 다운로드 실패:", e)
 
-# matplotlib 폰트 캐시 삭제 (스테일 캐시가 새 폰트를 무시하는 문제 방지)
-try:
-    cache_dir = matplotlib.get_cachedir()
-    for f in os.listdir(cache_dir):
-        if f.startswith("fontlist"):
-            os.remove(os.path.join(cache_dir, f))
-except Exception as e:
-    print("캐시 정리 건너뜀:", e)
-
+KFONT = None
 if os.path.exists(FONT_PATH):
     fm.fontManager.addfont(FONT_PATH)
-    FONT_NAME = fm.FontProperties(fname=FONT_PATH).get_name()
-    matplotlib.rcParams["font.family"] = FONT_NAME
-    matplotlib.rcParams["font.sans-serif"] = [FONT_NAME, "DejaVu Sans"]
-    print("폰트 적용:", FONT_NAME,
-          "| ttflist에 Nanum 존재:", any("Nanum" in f.name for f in fm.fontManager.ttflist))
+    KFONT = fm.FontProperties(fname=FONT_PATH)              # ← 이 객체를 직접 지정해서 씀
+    matplotlib.rcParams["font.family"] = KFONT.get_name()
+    print("폰트 적용:", KFONT.get_name())
 matplotlib.rcParams["axes.unicode_minus"] = False
-matplotlib.rcParams["font.weight"] = "normal"
-matplotlib.rcParams["axes.titleweight"] = "normal"
 
 # ===== 공통 함수 =====
 def notion_query(db_id):
@@ -230,10 +219,17 @@ if cat_val:
     def _tint(c, f=0.55):
         r, g, b = mc.to_rgb(c); return (r+(1-r)*f, g+(1-g)*f, b+(1-b)*f)
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), dpi=130, gridspec_kw={"width_ratios": [1, 1.1]})
-    ax1.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=90, counterclock=False,
-            colors=colors, wedgeprops={"edgecolor": "white", "linewidth": 1.5})
-    ax1.set_title("보유주식 분류별 비율", fontsize=14); ax1.axis("equal")
-    ax2.axis("off"); ax2.set_title("분류별 평가금액", fontsize=14)
+
+    # (좌) 파이 — 라벨/퍼센트에 폰트 직접 지정
+    wedges, texts, autotexts = ax1.pie(
+        sizes, labels=labels, autopct="%1.1f%%", startangle=90, counterclock=False,
+        colors=colors, wedgeprops={"edgecolor": "white", "linewidth": 1.5},
+        textprops={"fontproperties": KFONT})
+    for at in autotexts: at.set_fontproperties(KFONT)
+    ax1.set_title("보유주식 분류별 비율", fontsize=14, fontproperties=KFONT); ax1.axis("equal")
+
+    # (우) 표
+    ax2.axis("off"); ax2.set_title("분류별 평가금액", fontsize=14, fontproperties=KFONT)
     rows, cc = [], []
     for i, k in enumerate(labels):
         rows.append([k, f"{int(round(cat_val[k])):,}원", f"{cat_val[k]/total*100:.1f}%"]); cc.append([_tint(colors[i]), "white", "white"])
@@ -241,12 +237,40 @@ if cat_val:
     tbl = ax2.table(cellText=rows, colLabels=["분류", "평가금액", "비율"], cellColours=cc,
                     colColours=["#cfcfe8"]*3, cellLoc="center", loc="center")
     tbl.auto_set_font_size(False); tbl.set_fontsize(11); tbl.scale(1, 1.7)
+    for cell in tbl.get_celld().values():               # ← 표 모든 셀에 폰트 지정
+        cell.get_text().set_fontproperties(KFONT)
     buf = io.BytesIO(); plt.savefig(buf, format="png", bbox_inches="tight"); plt.close(fig)
 
     up = requests.post("https://api.imgbb.com/1/upload", params={"key": IMGBB_API_KEY},
                        data={"image": base64.b64encode(buf.getvalue()).decode()})
     up.raise_for_status(); img_url = up.json()["data"]["url"]
     print("차트 업로드:", img_url)
+
+    def page_children(bid):
+        out, cur = [], None
+        while True:
+            pa = {"page_size": 100}
+            if cur: pa["start_cursor"] = cur
+            r = requests.get(f"https://api.notion.com/v1/blocks/{bid}/children", headers=H, params=pa)
+            r.raise_for_status(); dt = r.json(); out += dt["results"]
+            if not dt.get("has_more"): break
+            cur = dt["next_cursor"]
+        return out
+    img_id, found = None, False
+    for b in page_children(PAGE_ID):
+        bt = b["type"]
+        if bt in ("heading_1", "heading_2", "heading_3"):
+            found = ("".join(x["plain_text"] for x in b[bt]["rich_text"]).strip() == CHART_HEADING)
+        elif found and bt == "image":
+            img_id = b["id"]; break
+    if img_id:
+        requests.patch(f"https://api.notion.com/v1/blocks/{img_id}", headers=H,
+                       json={"image": {"external": {"url": img_url}}}).raise_for_status()
+    else:
+        requests.patch(f"https://api.notion.com/v1/blocks/{PAGE_ID}/children", headers=H, json={"children": [
+            {"object":"block","type":"heading_2","heading_2":{"rich_text":[{"type":"text","text":{"content":CHART_HEADING}}]}},
+            {"object":"block","type":"image","image":{"type":"external","external":{"url":img_url}}}]}).raise_for_status()
+    print("차트 갱신 완료")
 
     def page_children(bid):
         out, cur = [], None
