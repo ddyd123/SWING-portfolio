@@ -21,25 +21,34 @@ CHART_HEADING = "분류별 비율"
 
 H = {"Authorization": f"Bearer {NOTION_TOKEN}", "Notion-Version": NOTION_VERSION, "Content-Type": "application/json"}
 
-# ===== 한글 폰트 (NanumGothic 다운로드 후 등록) =====
-def setup_korean_font():
-    import urllib.request
-    font_path = "/tmp/NanumGothic.ttf"
-    if not os.path.exists(font_path):
-        url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
-        try:
-            urllib.request.urlretrieve(url, font_path)
-        except Exception as e:
-            print("폰트 다운로드 실패:", e); return
-    try:
-        fm.fontManager.addfont(font_path)
-        name = fm.FontProperties(fname=font_path).get_name()
-        matplotlib.rcParams["font.family"] = name
-        print("한글 폰트 적용:", name)
-    except Exception as e:
-        print("폰트 등록 실패:", e)
+# ===== 한글 폰트 (캐시 초기화 + NanumGothic 등록) =====
+import urllib.request
+import matplotlib.font_manager as fm
 
-setup_korean_font()
+FONT_PATH = "/tmp/NanumGothic.ttf"
+FONT_URL = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
+if not os.path.exists(FONT_PATH):
+    try:
+        urllib.request.urlretrieve(FONT_URL, FONT_PATH)
+    except Exception as e:
+        print("폰트 다운로드 실패:", e)
+
+# matplotlib 폰트 캐시 삭제 (스테일 캐시가 새 폰트를 무시하는 문제 방지)
+try:
+    cache_dir = matplotlib.get_cachedir()
+    for f in os.listdir(cache_dir):
+        if f.startswith("fontlist"):
+            os.remove(os.path.join(cache_dir, f))
+except Exception as e:
+    print("캐시 정리 건너뜀:", e)
+
+if os.path.exists(FONT_PATH):
+    fm.fontManager.addfont(FONT_PATH)
+    FONT_NAME = fm.FontProperties(fname=FONT_PATH).get_name()
+    matplotlib.rcParams["font.family"] = FONT_NAME
+    matplotlib.rcParams["font.sans-serif"] = [FONT_NAME, "DejaVu Sans"]
+    print("폰트 적용:", FONT_NAME,
+          "| ttflist에 Nanum 존재:", any("Nanum" in f.name for f in fm.fontManager.ttflist))
 matplotlib.rcParams["axes.unicode_minus"] = False
 
 # ===== 공통 함수 =====
