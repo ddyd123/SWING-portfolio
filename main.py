@@ -432,14 +432,28 @@ if True:
     TOP_N = 60          # 코스피 시총 상위 후보 수
     HIGH_RATIO = 0.80   # 52주 고점 대비 비율 조건
 
-    print("주도주 분석: 코스피 시총 상위 수집 중...")
-    krx = fdr.StockListing("KOSPI")
-    cap_col = next((c for c in ["Marcap", "MarketCap", "Cap"] if c in krx.columns), None)
-    name_col = next((c for c in ["Name", "종목명"] if c in krx.columns), None)
-    code_col = next((c for c in ["Code", "Symbol", "종목코드"] if c in krx.columns), None)
-    krx = krx.dropna(subset=[cap_col]).copy()
-    krx[cap_col] = pd.to_numeric(krx[cap_col], errors="coerce")
-    krx = krx.dropna(subset=[cap_col]).sort_values(cap_col, ascending=False).head(TOP_N)
+    print("주도주 분석: 네이버 시총 상위 수집 중...")
+    UA_H = {"User-Agent": "Mozilla/5.0"}
+    cand = []   # (종목명, 코드)
+    pages = (TOP_N // 50) + 1
+    for pg in range(1, pages + 1):
+        try:
+            url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok=0&page={pg}"
+            html = requests.get(url, headers=UA_H, timeout=10).content.decode("euc-kr", "ignore")
+            tables = pd.read_html(html)
+            df_list = next((t for t in tables if "종목명" in t.columns), None)
+            if df_list is None: continue
+            df_list = df_list.dropna(subset=["종목명"])
+            for _, r in df_list.iterrows():
+                cand.append(str(r["종목명"]).strip())
+        except Exception as e:
+            print("네이버 시총 페이지 오류:", e)
+    # 종목명 → 코드 변환 (네이버 자동완성 재사용)
+    krx_list = []
+    for nm in cand[:TOP_N]:
+        code = find_kr_ticker(nm)
+        if code: krx_list.append((nm, code))
+    print(f"후보 종목 {len(krx_list)}개 확보")
 
     # KOSPI200 6개월 수익률
     end = datetime.date.today(); start = end - datetime.timedelta(days=200)
@@ -447,8 +461,8 @@ if True:
     ks200_6m = (ks200.iloc[-1] / ks200.iloc[0] - 1) * 100 if len(ks200) > 20 else 0.0
 
     leaders = []
-    for _, row in krx.iterrows():
-        code = str(row[code_col]).zfill(6); nm = row[name_col]
+    for nm, code in krx_list:
+        code = str(code).zfill(6)
         try:
             df = fdr.DataReader(code, start)["Close"].dropna()
             if len(df) < 120: continue
