@@ -233,12 +233,6 @@ if cat_val:
     for at in autotexts: at.set_fontproperties(KFONT)
     ax1.set_title("보유주식 분류별 비율", fontsize=14, fontproperties=KFONT); ax1.axis("equal")
 
-    ax2.axis("off"); ax2.set_title("분류별 평가금액", fontsize=14, fontproperties=KFONT)
-    # ... rows, cc, tbl 생성은 그대로 ...
-    tbl.auto_set_font_size(False); tbl.set_fontsize(11); tbl.scale(1, 1.7)
-    for cell in tbl.get_celld().values():
-        cell.get_text().set_fontproperties(KFONT)
-
     # (우) 표
     ax2.axis("off"); ax2.set_title("분류별 평가금액", fontsize=14, fontproperties=KFONT)
     rows, cc = [], []
@@ -248,7 +242,7 @@ if cat_val:
     tbl = ax2.table(cellText=rows, colLabels=["분류", "평가금액", "비율"], cellColours=cc,
                     colColours=["#cfcfe8"]*3, cellLoc="center", loc="center")
     tbl.auto_set_font_size(False); tbl.set_fontsize(11); tbl.scale(1, 1.7)
-    for cell in tbl.get_celld().values():               # ← 표 모든 셀에 폰트 지정
+    for cell in tbl.get_celld().values():
         cell.get_text().set_fontproperties(KFONT)
     buf = io.BytesIO(); plt.savefig(buf, format="png", bbox_inches="tight"); plt.close(fig)
 
