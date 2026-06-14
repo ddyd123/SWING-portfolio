@@ -448,7 +448,7 @@ if True:
                         if not printed:
                             print("WICS 응답 샘플:", sec_cd, it); printed = True
                         code = str(it.get("CMP_CD","")).zfill(6); name = it.get("CMP_KOR","")
-                        wgt = it.get("WGT") or it.get("IDX_WGT") or it.get("MKT_VAL") or 0
+                        wgt = it.get("MKT_VAL") or it.get("WGT") or 0
                         try: wgt = float(str(wgt).replace(",",""))
                         except: wgt = 0.0
                         if len(code)==6 and name:
