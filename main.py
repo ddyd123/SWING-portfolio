@@ -50,6 +50,8 @@ if os.path.exists(FONT_PATH):
     print("폰트 적용:", FONT_NAME,
           "| ttflist에 Nanum 존재:", any("Nanum" in f.name for f in fm.fontManager.ttflist))
 matplotlib.rcParams["axes.unicode_minus"] = False
+matplotlib.rcParams["font.weight"] = "normal"
+matplotlib.rcParams["axes.titleweight"] = "normal"
 
 # ===== 공통 함수 =====
 def notion_query(db_id):
@@ -230,8 +232,8 @@ if cat_val:
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), dpi=130, gridspec_kw={"width_ratios": [1, 1.1]})
     ax1.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=90, counterclock=False,
             colors=colors, wedgeprops={"edgecolor": "white", "linewidth": 1.5})
-    ax1.set_title("보유주식 분류별 비율", fontsize=14, fontweight="bold"); ax1.axis("equal")
-    ax2.axis("off"); ax2.set_title("분류별 평가금액", fontsize=14, fontweight="bold")
+    ax1.set_title("보유주식 분류별 비율", fontsize=14); ax1.axis("equal")
+    ax2.axis("off"); ax2.set_title("분류별 평가금액", fontsize=14)
     rows, cc = [], []
     for i, k in enumerate(labels):
         rows.append([k, f"{int(round(cat_val[k])):,}원", f"{cat_val[k]/total*100:.1f}%"]); cc.append([_tint(colors[i]), "white", "white"])
