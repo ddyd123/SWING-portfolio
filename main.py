@@ -302,5 +302,152 @@ if cat_val:
             {"object":"block","type":"heading_2","heading_2":{"rich_text":[{"type":"text","text":{"content":CHART_HEADING}}]}},
             {"object":"block","type":"image","image":{"type":"external","external":{"url":img_url}}}]}).raise_for_status()
     print("차트 갱신 완료")
+# ===== 5) 지수기반 종목분석 (금요일에만 실행) =====
+# weekday(): 월=0 ... 금=4 ... 일=6
+if datetime.date.today().weekday() == 4:
+    print("금요일 → 지수기반 종목분석 실행")
+    ANALYSIS_HEADING = "지수기반 종목분석"
+    CUTLOSS_GAP = -10.0
+    WATCHLIST = [
+        ("테슬라", "TSLA", "나스닥100"), ("구글(알파벳)", "GOOG", "나스닥100"), ("엔비디아", "NVDA", "나스닥100"),
+        ("SK하이닉스", "000660", "코스피200"), ("현대자동차", "005380", "코스피200"), ("삼성전자", "005930", "코스피200"),
+        ("삼성전자우", "005935", "코스피200"), ("삼성전기", "009150", "코스피200"), ("타이거200", "102110", "코스피200"),
+        ("월마트", "WMT", "S&P500"), ("존슨앤드존슨", "JNJ", "S&P500"), ("코카콜라", "KO", "S&P500"),
+    ]
+    INDEX_SYMS = {"코스피200": ["^KS200", "069500.KS"], "S&P500": ["^GSPC"], "나스닥100": ["^NDX"]}
+    ORDER = ["코스피200", "S&P500", "나스닥100"]
+
+    def _month_end(df):
+        try: return df.resample("ME").last()
+        except Exception: return df.resample("M").last()
+    def monthly_returns(symbols):
+        end = datetime.date.today(); start = end - datetime.timedelta(days=240)
+        data = yf.download(symbols, start=start.isoformat(), end=end.isoformat(),
+                           progress=False, auto_adjust=True)["Close"]
+        if isinstance(data, pd.Series): data = data.to_frame()
+        return _month_end(data).pct_change().mul(100).dropna(how="all").tail(6)
+    def cum_return(series):
+        s = series.dropna()
+        import numpy as np
+        return (np.prod(1 + s/100) - 1) * 100 if len(s) else float("nan")
+    def resolve_index(cands):
+        for s in cands:
+            try:
+                d = yf.download(s, period="1mo", progress=False, auto_adjust=True)["Close"]
+                if len(pd.Series(d.squeeze()).dropna()): return s
+            except Exception: pass
+        return cands[0]
+
+    idx_sym = {name: resolve_index(c) for name, c in INDEX_SYMS.items()}
+    idx_ret = monthly_returns(list(idx_sym.values()))
+    a_stock_ret = monthly_returns([yf_syms(t, c)[0] for _, t, c in WATCHLIST])
+    a_months = [d.strftime("%y-%m") for d in a_stock_ret.index]
+    idx_ret = idx_ret.reindex(a_stock_ret.index)
+
+    # 세로 3단 차트 (한 장)
+    fig, axes = plt.subplots(3, 1, figsize=(12, 18), dpi=140)
+    for ax, idxname in zip(axes, ORDER):
+        isym = idx_sym[idxname]
+        iser = idx_ret[isym] if isym in idx_ret else pd.Series(index=a_stock_ret.index, dtype=float)
+        ax.plot(a_months, iser.values, marker="o", lw=4, color="black", label=f"{idxname}(지수)", zorder=5)
+        for n, t, ix in WATCHLIST:
+            if ix != idxname: continue
+            sym = yf_syms(t, ix)[0]
+            if sym in a_stock_ret: ax.plot(a_months, a_stock_ret[sym].values, marker="o", lw=2, label=n)
+        ax.axhline(0, color="gray", lw=0.8, ls="--")
+        ax.set_title(f"{idxname} 기준 · 6개월 월별수익률 비교", fontsize=16, fontproperties=KFONT)
+        ax.set_xlabel("월", fontproperties=KFONT); ax.set_ylabel("월별 수익률 (%)", fontproperties=KFONT)
+        ax.grid(True, alpha=0.3); ax.tick_params(axis="x", rotation=45)
+        leg = ax.legend(fontsize=11, loc="best", ncol=2)
+        for txt in leg.get_texts(): txt.set_fontproperties(KFONT)
+    fig.tight_layout(pad=3.0)
+    buf = io.BytesIO(); fig.savefig(buf, format="png", bbox_inches="tight"); plt.close(fig)
+
+    up = requests.post("https://api.imgbb.com/1/upload", params={"key": IMGBB_API_KEY},
+                       data={"image": base64.b64encode(buf.getvalue()).decode()})
+    up.raise_for_status(); a_url = up.json()["data"]["url"]
+    print("지수분석 차트 업로드:", a_url)
+
+    # 노션 "지수기반 종목분석" 이미지 블록 갱신
+    a_img, a_found = None, False
+    for b in page_children(PAGE_ID):
+        bt = b["type"]
+        if bt in ("heading_1", "heading_2", "heading_3"):
+            a_found = ("".join(x["plain_text"] for x in b[bt]["rich_text"]).strip() == ANALYSIS_HEADING)
+        elif a_found and bt == "image":
+            a_img = b["id"]; break
+    if a_img:
+        requests.patch(f"https://api.notion.com/v1/blocks/{a_img}", headers=H,
+                       json={"image": {"external": {"url": a_url}}}).raise_for_status()
+    else:
+        requests.patch(f"https://api.notion.com/v1/blocks/{PAGE_ID}/children", headers=H, json={"children": [
+            {"object":"block","type":"heading_2","heading_2":{"rich_text":[{"type":"text","text":{"content":ANALYSIS_HEADING}}]}},
+            {"object":"block","type":"image","image":{"type":"external","external":{"url":a_url}}}]}).raise_for_status()
+    print("지수분석 차트 갱신 완료")
+    # ----- 분석 대상 노션 표(인라인 DB) 자동 갱신 -----
+    import math
+    ANALYSIS_DB_TITLE = "분석 대상"
+
+    def _find_child_db(page_id, title):
+        cur = None
+        while True:
+            pa = {"page_size": 100}
+            if cur: pa["start_cursor"] = cur
+            r = requests.get(f"https://api.notion.com/v1/blocks/{page_id}/children", headers=H, params=pa)
+            r.raise_for_status(); data = r.json()
+            for b in data["results"]:
+                if b["type"] == "child_database" and b["child_database"]["title"].strip() == title:
+                    return b["id"]
+            if not data.get("has_more"): break
+            cur = data["next_cursor"]
+        return None
+
+    a_db = _find_child_db(PAGE_ID, ANALYSIS_DB_TITLE)
+    if not a_db:
+        r = requests.post("https://api.notion.com/v1/databases", headers=H, json={
+            "parent": {"type": "page_id", "page_id": PAGE_ID},
+            "title": [{"type": "text", "text": {"content": ANALYSIS_DB_TITLE}}],
+            "is_inline": True,
+            "properties": {
+                "종목": {"title": {}}, "티커": {"rich_text": {}},
+                "기준지수": {"select": {"options": [
+                    {"name": "코스피200", "color": "blue"}, {"name": "S&P500", "color": "green"}, {"name": "나스닥100", "color": "purple"}]}},
+                "6개월수익률(%)": {"number": {"format": "number"}},
+                "지수수익률(%)": {"number": {"format": "number"}},
+                "차이(%p)": {"number": {"format": "number"}},
+                "판정": {"select": {"options": [{"name": "손절 검토", "color": "red"}, {"name": "유지", "color": "green"}]}},
+            }})
+        r.raise_for_status(); a_db = r.json()["id"]
+
+    a_existing = {}
+    for row in notion_query(a_db):
+        rtk = row["properties"]["티커"]["rich_text"]
+        if rtk: a_existing[rtk[0]["plain_text"]] = row["id"]
+
+    def _num(x):
+        return None if (x is None or (isinstance(x, float) and math.isnan(x))) else round(float(x), 2)
+
+    for n, t, ix in WATCHLIST:
+        sym = yf_syms(t, ix)[0]
+        sret = cum_return(a_stock_ret[sym]) if sym in a_stock_ret else float("nan")
+        iret = cum_return(idx_ret[idx_sym[ix]]) if idx_sym[ix] in idx_ret else float("nan")
+        gap = sret - iret
+        verdict = "손절 검토" if (pd.notna(gap) and gap <= CUTLOSS_GAP) else "유지"
+        props = {
+            "종목": {"title": [{"type": "text", "text": {"content": n}}]},
+            "티커": {"rich_text": [{"type": "text", "text": {"content": t}}]},
+            "기준지수": {"select": {"name": ix}},
+            "6개월수익률(%)": {"number": _num(sret)},
+            "지수수익률(%)": {"number": _num(iret)},
+            "차이(%p)": {"number": _num(gap)},
+            "판정": {"select": {"name": verdict}},
+        }
+        if t in a_existing:
+            requests.patch(f"https://api.notion.com/v1/pages/{a_existing[t]}", headers=H, json={"properties": props}).raise_for_status()
+        else:
+            requests.post("https://api.notion.com/v1/pages", headers=H, json={"parent": {"database_id": a_db}, "properties": props}).raise_for_status()
+    print(f"분석 대상 표 갱신 완료 ({len(WATCHLIST)}종목)")
+else:
+    print("오늘은 금요일이 아니라 지수분석은 건너뜀")
 
 print("=== 전체 완료 ===")
