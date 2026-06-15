@@ -218,6 +218,69 @@ else:
     requests.post("https://api.notion.com/v1/pages", headers=H, json={"parent": {"database_id": DB_ASSETS}, "properties": ap}).raise_for_status()
 print(f"총자산 갱신: 평가 {round(tot_eval):,} | 평가손익 {round(tot_unreal):,} | 실현손익 {round(tot_realized):,} | 수익률 {tot_rate*100:.2f}%")
 
+# ===== 3.5) 자산 추이 그래프 (총평가금액 + 총수익률) → ImgBB → 노션 =====
+from matplotlib.ticker import FuncFormatter
+ASSET_TREND_HEADING = "자산 추이"
+rows_a = []
+for a in notion_query(DB_ASSETS):
+    d = p_title(a, "작성일자")
+    if not d: continue
+    try:
+        dt = datetime.date.fromisoformat(d[:10])
+    except Exception:
+        continue
+    rows_a.append({"date": dt, "eval": p_num(a, "총평가금액") or 0,
+                   "rate": (p_num(a, "총수익률") or 0) * 100})
+rows_a.sort(key=lambda x: x["date"])
+
+if rows_a:
+    xs = [r["date"] for r in rows_a]
+    evals = [r["eval"] for r in rows_a]
+    rates = [r["rate"] for r in rows_a]
+    fig, ax1 = plt.subplots(figsize=(12, 6), dpi=140)
+    c1 = "#3a6ea5"
+    ax1.plot(xs, evals, marker="o", lw=2.5, color=c1, label="총평가금액")
+    ax1.set_ylabel("총평가금액 (원)", color=c1, fontproperties=KFONT)
+    ax1.tick_params(axis="y", labelcolor=c1)
+    ax1.set_xlabel("날짜", fontproperties=KFONT)
+    ax1.grid(True, alpha=0.3)
+    ax1.yaxis.set_major_formatter(FuncFormatter(lambda v, p: f"{int(v):,}"))
+    ax2t = ax1.twinx()
+    c2 = "#d1495b"
+    ax2t.plot(xs, rates, marker="s", lw=2.5, color=c2, ls="--", label="총수익률")
+    ax2t.set_ylabel("총수익률 (%)", color=c2, fontproperties=KFONT)
+    ax2t.tick_params(axis="y", labelcolor=c2)
+    ax2t.axhline(0, color="gray", lw=0.8, ls=":")
+    ax1.set_title("자산 추이 · 총평가금액 & 총수익률", fontsize=15, fontproperties=KFONT)
+    fig.autofmt_xdate(rotation=45)
+    l1, lab1 = ax1.get_legend_handles_labels()
+    l2, lab2 = ax2t.get_legend_handles_labels()
+    leg = ax1.legend(l1+l2, lab1+lab2, loc="upper left", fontsize=11)
+    for tx in leg.get_texts(): tx.set_fontproperties(KFONT)
+    for lbl in ax1.get_xticklabels(): lbl.set_fontproperties(KFONT)
+    fig.tight_layout()
+    buf = io.BytesIO(); fig.savefig(buf, format="png", bbox_inches="tight"); plt.close(fig)
+
+    up = requests.post("https://api.imgbb.com/1/upload", params={"key": IMGBB_API_KEY},
+                       data={"image": base64.b64encode(buf.getvalue()).decode()})
+    up.raise_for_status(); at_url = up.json()["data"]["url"]
+    print("자산 추이 차트 업로드:", at_url)
+
+    at_img, at_found = None, False
+    for b in page_children(PAGE_ID):
+        bt = b["type"]
+        if bt in ("heading_1","heading_2","heading_3"):
+            at_found = ("".join(x["plain_text"] for x in b[bt]["rich_text"]).strip() == ASSET_TREND_HEADING)
+        elif at_found and bt == "image":
+            at_img = b["id"]; break
+    if at_img:
+        requests.patch(f"https://api.notion.com/v1/blocks/{at_img}", headers=H, json={"image":{"external":{"url":at_url}}}).raise_for_status()
+    else:
+        requests.patch(f"https://api.notion.com/v1/blocks/{PAGE_ID}/children", headers=H, json={"children":[
+            {"object":"block","type":"heading_2","heading_2":{"rich_text":[{"type":"text","text":{"content":ASSET_TREND_HEADING}}]}},
+            {"object":"block","type":"image","image":{"type":"external","external":{"url":at_url}}}]}).raise_for_status()
+    print("자산 추이 차트 갱신 완료")
+
 # ===== 4) 분류별 파이차트 + 표 → ImgBB → 노션 이미지 블록 =====
 cat_val = {}
 for h in notion_query(DB_HOLDINGS):
@@ -282,7 +345,7 @@ if cat_val:
    
 # ===== 5) 지수기반 종목분석 (금요일에만 실행) =====
 # weekday(): 월=0 ... 금=4 ... 일=6
-if True:
+if datetime.date.today().weekday() == 4:
     print("금요일 → 지수기반 종목분석 실행")
     ANALYSIS_HEADING = "지수기반 종목분석"
     CUTLOSS_GAP = -10.0
