@@ -87,11 +87,35 @@ def yf_syms(ticker, cat):
     if is_domestic(cat) or str(ticker).isdigit(): return [f"{ticker}.KS", f"{ticker}.KQ"]
     return [ticker]
 
+# ===== 실시간 USD/KRW 환율 =====
+def fx_usdkrw_now():
+    try:
+        h = yf.Ticker("KRW=X").history(period="5d")["Close"].dropna()
+        if len(h): return float(h.iloc[-1])
+    except Exception: pass
+    return 1380.0   # 조회 실패 시 폴백
+
+def fx_usdkrw_on(date_str):
+    d = datetime.date.fromisoformat(date_str[:10])
+    start = (d - datetime.timedelta(days=10)).isoformat(); end = (d + datetime.timedelta(days=1)).isoformat()
+    try:
+        h = yf.download("KRW=X", start=start, end=end, progress=False)["Close"]
+        s = pd.Series(h.squeeze()).dropna()
+        if len(s):
+            s.index = pd.to_datetime(s.index).date
+            upto = [v for dt, v in s.items() if dt <= d]
+            return float(upto[-1] if upto else s.iloc[-1])
+    except Exception: pass
+    return fx_usdkrw_now()
+
 def get_price(ticker, cat):
     for s in yf_syms(ticker, cat):
         try:
             h = yf.Ticker(s).history(period="1d")
-            if len(h): return float(h["Close"].iloc[-1])
+            if len(h):
+                px = float(h["Close"].iloc[-1])
+                if not is_domestic(cat): px *= fx_usdkrw_now()   # 해외 → 현재 환율로 원화 환산
+                return px
         except Exception: pass
     return None
 
@@ -105,7 +129,9 @@ def close_on_date(ticker, cat, date_str):
             if len(s):
                 s.index = pd.to_datetime(s.index).date
                 upto = [v for dt, v in s.items() if dt <= d]
-                return float(upto[-1] if upto else s.iloc[-1])
+                px = float(upto[-1] if upto else s.iloc[-1])
+                if not is_domestic(cat): px *= fx_usdkrw_on(date_str)   # 해외 → 그날 환율로 원화 환산
+                return px
         except Exception: pass
     return None
 
