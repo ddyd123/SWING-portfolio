@@ -531,22 +531,14 @@ if True:
         if plot_list:
             cutoff = plot_list[0]["series"].index[-1] - pd.Timedelta(days=182)
             fig, ax = plt.subplots(figsize=(14, 8), dpi=140)
-            # 나머지 대장주: 옅은 회색 (범례 없음)
-            for R in plot_list:
-                if R["verdict"] == "주도주": continue
+           # 주도주: 각기 다른 색 + 굵은 선 + ★범례 (회색 배경·상위8 제거)
+            leader_list = [R for R in plot_list if R["verdict"] == "주도주"]
+            lead_cmap = plt.cm.tab10.colors
+            for i, R in enumerate(leader_list):
                 sr = R["series"]; sr = sr[sr.index >= cutoff]
-                if len(sr): ax.plot(sr.index, (sr/sr.iloc[0]*100).values, lw=0.8, color="#cccccc", alpha=0.6, zorder=1)
-            # 상대수익률 상위 8개: 색상 + 범례
-            top8 = sorted([r for r in plot_list], key=lambda x: (x["rel"] if x["rel"] is not None else -999), reverse=True)[:8]
-            cmap = plt.cm.tab10.colors
-            for i, R in enumerate(top8):
-                sr = R["series"]; sr = sr[sr.index >= cutoff]
-                if len(sr): ax.plot(sr.index, (sr/sr.iloc[0]*100).values, lw=2, color=cmap[i % 10], label=R["name"], zorder=3)
-            # 주도주: 굵게 강조 (상위8에 없더라도)
-            for R in plot_list:
-                if R["verdict"] != "주도주": continue
-                sr = R["series"]; sr = sr[sr.index >= cutoff]
-                if len(sr): ax.plot(sr.index, (sr/sr.iloc[0]*100).values, lw=3, color="red", label=f"★{R['name']}(주도주)", zorder=4)
+                if len(sr):
+                    ax.plot(sr.index, (sr/sr.iloc[0]*100).values, lw=2.6,
+                            color=lead_cmap[i % 10], label=f"★{R['name']}", zorder=4)
             # KOSPI200 기준선
             if ks is not None:
                 ksr = ks[ks.index >= cutoff]
