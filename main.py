@@ -277,6 +277,10 @@ if rows_a:
     ax2t.set_ylabel("총수익률 (%)", color=c2, fontproperties=KFONT)
     ax2t.tick_params(axis="y", labelcolor=c2)
     ax2t.axhline(0, color="gray", lw=0.8, ls=":")
+    if rates:
+        lo, hi = min(rates), max(rates)
+        pad = max(1.0, (hi - lo) * 0.3)
+        ax2t.set_ylim(lo - pad, hi + pad)
     ax1.set_title("자산 추이 · 총평가금액 & 총수익률", fontsize=15, fontproperties=KFONT)
     fig.autofmt_xdate(rotation=45)
     l1, lab1 = ax1.get_legend_handles_labels()
